@@ -1,0 +1,372 @@
+---
+title: "Final Exam"
+format: html
+editor: visual
+toc: true
+fold: code
+---
+
+# ENVS 193DS - Final Exam
+
+Date: 16 June 2023
+
+Author: Eilidh slater
+
+## Problem 1: How does total seed number differ between kangaroo rat mound locations?
+
+### Introduction and Context
+
+This project analyzes the vaiation between the total number of seeds collected between different Kangaroo Rat Mounds. The data will be evaluated using a Chi-Square Analysis, as it deals with count data and categorical data. The data has been collected and analyzed for the purpose of evaluating the impacts of disturbances, such as rat mound activity, on the presence of seeds in a Chihuahua Desert grassland seed bank. (Koontz, Simpson)
+
+### Methods
+
+```{r}
+install.packages("patchwork")
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(janitor)
+library(patchwork)
+```
+
+#### Read In Data
+
+```{r}
+ratmounds <- read.table("~/Desktop/College/Year 3 (22-23)/Spring Quarter/ENV S 193DS/ENVS-193DS_Final/data/knb-lter-sev.208.102459/sev208_kratseedbank_20120213.txt", sep = ",", header = TRUE)
+
+ratmounds$mnd <- factor(ratmounds$mnd)
+#Specifies that the mound ID column is discrete, because the ID's are numbers. 
+
+colnames(ratmounds) <- c("mound_ID", "mound_location", "microhabitat", "species", "seeds")
+
+```
+
+For context: summarize seed counts from entire ratmounds sataset
+
+```{r}
+seed_count_summary <- ratmounds %>%
+  summarise(count_summary = sum(seeds),
+            avg_summary = mean(seeds),
+            median_summary = median(seeds),
+            sd_summary = sd(seeds),
+            se_summary = sd(seeds) / sqrt(n()),
+            range_summary = paste(min(seeds), max(seeds), sep = "-")
+            )
+
+seed_count_summary
+```
+
+The lowest seed count is a negative value, which doesn't seem logical and can impact future statistical tests, so the negative counts need to be identified and, if appropriate, eliminated or changed to a value of 0.
+
+```{r}
+
+negative_indices <- which(ratmounds$seeds < 0)
+negative_values <- any(ratmounds$seeds < 0)
+negative_seed_count <- ratmounds$seeds[negative_indices]
+
+negative_data <- data.frame(row = negative_indices, presence_of_negatives = negative_values, count = negative_seed_count)
+
+negative_data
+```
+
+Since there are only three negative counts out of 1560 observations, it seems logical to change those values to 0 so that the statistical tests can run more smoothly.
+
+```{r}
+
+ratmounds$seeds[ratmounds$seeds < 0] <- 0
+```
+
+#### Summarize seed counts by mound location
+
+```{r}
+seeds_by_location <- ratmounds %>%
+  group_by(mound_location) %>%
+  summarise(total_seeds = sum(seeds),
+            avg_seeds = mean(seeds),
+            median_seeds = median(seeds),
+            sd_seeds = sd(seeds),
+            se_seeds = sd(seeds) / sqrt(n()),
+            range_seeds = paste(min(seeds), max(seeds), sep = "-")
+            )
+
+seeds_by_location
+```
+
+#### Exploratory Visuals
+
+```{r}
+barplot_seeds <- ggplot(seeds_by_location, aes(x = mound_location, y = total_seeds)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  geom_errorbar(aes(ymin = total_seeds - se_seeds, ymax = total_seeds + se_seeds), width = 0.2, color = "black") +
+  labs(x = "Mound Location", y = "Total Seed Number") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(data = ratmounds, aes(x = mound_location, y = seeds)) +
+  # fill the boxplot shape using the species column
+  # make the boxplots narrower
+  geom_boxplot(aes(fill = mound_location), width = 0.2) +
+  geom_jitter(aes(fill = mound_location), alpha = 0.5) +
+  
+  # relabel the axis titles, plot title, and caption
+  labs(x = "Mound Location", y = "Seed Counts",
+       title = "Seed Counts by Mound Location (cardinal)") +
+  # themes built in to ggplot
+  theme_bw() +
+  # other theme adjustments
+  theme(legend.position = "none", 
+        axis.title = element_text(size = 13),
+        axis.text = element_text(size = 12),
+        plot.title = element_text(size = 14),
+        text = element_text(family = "Times New Roman"))
+```
+
+It looks like there are outliers, so it is worth exploring which ones are too extreme.
+
+#### Identifying Outliers
+
+```{r}
+outliers_seed_counts <- ratmounds %>%
+  group_by(mound_location) %>%
+  mutate(Q1_rat_seeds = quantile(seeds, 0.25),
+         Q3_rat_seeds = quantile(seeds, 0.75),
+         IQR_rat_seeds = Q3_rat_seeds - Q1_rat_seeds,
+         lower_bound_rats = Q1_rat_seeds - 1.5 * IQR_rat_seeds,
+         upper_bound_rats = Q3_rat_seeds + 1.5 * IQR_rat_seeds,
+         outlier = seeds < lower_bound_rats | seeds > upper_bound_rats)
+
+count_outliers_seed_counts <- sum(outliers_seed_counts$outlier)
+range_outliers_seed_counts <- range(ratmounds$seeds[outliers_seed_counts$outlier])
+
+upper_bound_rats <- outliers_seed_counts$upper_bound_rats
+
+upper_outliers_table <- outliers_seed_counts %>%
+  group_by(mound_location) %>%
+  filter(seeds > upper_bound_rats) %>%
+  summarise(count_upper_outliers = n(),
+            lowest_upper_outlier = min(seeds),
+            highest_upper_outlier = max(seeds),
+            mean_upper_outliers = mean(seeds),
+            median_upper_outliers = median(seeds))
+
+upper_outliers <- outliers_seed_counts %>%
+  filter(outlier) %>%
+  select(mound_location, seeds)
+
+upper_outliers_table
+```
+
+```{r}
+ggplot(upper_outliers, aes(x = seeds)) +
+  geom_histogram(binwidth = 10, fill = "lightblue", color = "black") +
+  labs(x = "Seed Count", y = "Frequency") +
+  theme_minimal()
+```
+
+While there are quite a few upper outliers, the vast majority of them are still very close to the rest of the non-outlier data, so they will be left in as it is suspected that they are only considered outliers because of the significant number of 0 values in the seed counts.
+
+Now, to perform statistical tests to evaluate the differences of total seed numbers by mound locations (N, S, E, and W).
+
+#### Chi-Square Test
+
+The Chi-Square Test is the most appropriate statistical test for this data as it can analyze count data of independent samples. The chi-square will be performed on the summary statistics data (which is the summary statistics of seed counts grouped by mound location) so that it can directly compare the mound locations and the respective seed counts.
+
+#### Null and Alternative Hypotheses:
+
+Null Hypothesis (H0): There is no relationship between variables Mound Location and Total Seed Count, meaning that the kangaroo rat mound location does not have an impact on the count of seeds found there.
+
+Alternative Hypothesis (HA): There is a relationship between variables Mound Location and Total Seed Count, meaning that the kangaroo rat mound location does have an impact on the count of seeds found there.
+
+#### Performing Chi-Square Test
+
+```{r}
+
+chi_cont_table <- table(seeds_by_location$mound_location, seeds_by_location$total_seeds)
+
+chi_mound_seeds <- chisq.test(chi_cont_table)
+
+print(chi_mound_seeds)
+```
+
+The Chi-Square analysis resulted in a p-value of 0.2133, which is greater than the significance value of 0.05 that was used. Therefore, there is insufficient evidence to reject the null hypothesis. Instead, it suggests that there is indeed a relationship between mound location and total seed counts.
+
+### Results
+
+As explored in the Methods section, a chi-square analysis revealed a p-value of 0.2133, which means that there is not adequate evidence to reject the null hypothesis. This means, therefor, that there is indeed a statistically significant relationship between mound location and total seed counts. In the context of the biological issue discussed in the research, it is suggested that mound location may significantly influence the seed count of seed banks, which means that there is potential for similar interactions to greatly threaten the vtality of the seed banks.
+
+```{r}
+print(seeds_by_location)
+```
+
+```{r}
+print(chi_mound_seeds)
+```
+
+## Problem 2: How does seed count vary with plot type (shrub or open), plant species, and total number of inflorescences? Is there a simpler model that explains seed count, and if so, what is it?
+
+### 
+
+### Methods:
+
+Read in Data:
+
+```{r}
+community_flower_counts <- read_csv("~/Desktop/College/Year 3 (22-23)/Spring Quarter/ENV S 193DS/ENVS-193DS_Final/data/knb-lter-nwt.prob2/shrubstudy_community_flower_counts.ms.data.csv")
+
+individual_flower_counts <- read_csv("~/Desktop/College/Year 3 (22-23)/Spring Quarter/ENV S 193DS/ENVS-193DS_Final/data/knb-lter-nwt.prob2/shrubstudy_individual_flower_counts.ms.data.csv")
+
+pollinators <- read_csv("~/Desktop/College/Year 3 (22-23)/Spring Quarter/ENV S 193DS/ENVS-193DS_Final/data/knb-lter-nwt.prob2/shrubstudy_pollinator.ms.data.csv")
+
+seed_counts_weights <- read_csv("~/Desktop/College/Year 3 (22-23)/Spring Quarter/ENV S 193DS/ENVS-193DS_Final/data/knb-lter-nwt.prob2/shrubstudy_seed_ctwt.ms.data.csv")
+```
+
+clean names of some columns:
+
+```{r}
+community_flower_counts <- community_flower_counts %>%
+  rename(date_collected = date)
+
+individual_flower_counts <- individual_flower_counts %>%
+  rename(date_collected = date)
+
+pollinators <- pollinators %>%
+  rename(date_collected = date)
+
+pollinators <- pollinators %>%
+  rename(species = plant_visited)
+
+seed_counts_weights <- seed_counts_weights %>%
+  rename(seedcount = nr_seeds)
+
+```
+
+There are a couple of extreme outliers, where the seed count is above 150. It only occurs twice, so they are being removed to keep the graphs and analysis clean.
+
+```{r}
+
+filtered_seed_count <- seed_counts_weights %>%
+  filter(seedcount <= 150)
+
+```
+
+```{r}
+
+plot1 <- ggplot(filtered_seed_count, aes(x = treatment, y = seedcount)) +
+  geom_jitter(width = 0.2, height = 0) +
+  geom_boxplot(width = 0.3, outlier.shape = NA) +
+  labs(x = "Treatment", y = "Seed Count") +
+  ggtitle("Seed Count vs. Treatment")
+
+# Create a jitterplot and boxplot combination for seed count and species
+plot2 <- ggplot(filtered_seed_count, aes(x = species, y = seedcount)) +
+  geom_jitter(width = 0.2, height = 0) +
+  geom_boxplot(width = 0.3, outlier.shape = NA) +
+  labs(x = "Species", y = "Seed Count") +
+  ggtitle("Seed Count vs. Species")
+
+# Create a scatterplot for seed count and total number of inflorescences
+plot3 <- ggplot(filtered_seed_count, aes(x = total_nr_infl, y = seedcount)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +  # Add a linear trendline
+  labs(x = "Total Number of Inflorescences", y = "Seed Count") +
+  ggtitle("Seed Count vs. Total Number of Inflorescences")
+
+# Display the plots separately
+print(plot1)
+print(plot2)
+print(plot3)
+```
+
+```{r}
+combined_scatterplot <- ggplot(filtered_seed_count, aes(x = total_nr_infl, y = seedcount, color = species, shape = treatment)) +
+  geom_point() +
+  geom_smooth(aes(group = species, color = species), method = "lm", se = FALSE) +
+  geom_smooth(aes(group = treatment, linetype = treatment), method = "lm", color = "black", se = FALSE) +
+  labs(x = "Total Number of Inflorescences", y = "Seed Count") +
+  ggtitle("Seed Count vs. Total Number of Inflorescences") +
+  scale_color_discrete(name = "Species") +
+  scale_shape_manual(name = "Treatment", values = c(16, 17)) +
+  theme(legend.position = "right")
+
+print(combined_scatterplot)
+```
+
+Just out of interest and to see the trends more clearly, I am going to create a zoomed in version of the scatter plot. This is because I wanted to see where the bulk of the points were, but don't want to neglect the other points because they aren't necessarily outliers. This zoomed in graph is just another view of the scatter plot above that allows more detail to be seen but DOES NOT represent the full data set.
+
+```{r}
+zoomed_data <- filtered_seed_count %>%
+  filter(seedcount <= 50, total_nr_infl <= 20)
+
+# Create a scatterplot with limited data
+zoomed_scatterplot <- ggplot(zoomed_data, aes(x = total_nr_infl, y = seedcount, color = species, shape = treatment)) +
+  geom_point() +
+  geom_smooth(data = filtered_seed_count %>% filter(seedcount <= 50, total_nr_infl <= 20),
+              aes(group = species, color = species), method = "lm", se = FALSE) +
+  geom_smooth(data = filtered_seed_count %>% filter(seedcount <= 50, total_nr_infl <= 20),
+              aes(group = treatment, linetype = treatment), method = "lm", color = "black", se = FALSE) +
+  labs(x = "Total Number of Inflorescences", y = "Seed Count") +
+  ggtitle("Seed Count vs. Total Number of Inflorescences (Limited Data)") +
+  scale_color_discrete(name = "Species") +
+  scale_shape_manual(name = "Treatment", values = c(16, 17)) +
+  scale_linetype_manual(name = "Treatment", values = c("solid", "dashed")) +
+  theme(legend.position = "right")
+
+# Display the scatterplot
+print(zoomed_scatterplot)
+```
+
+Linear Regression
+
+The linear regression model is used to evaluate the relationship between the dependent variable (seed counts) and the independent variable(s).
+
+```{r}
+regression_model_seeds <- lm(seedcount ~ treatment + species + total_nr_infl, data = filtered_seed_count)
+
+# View the summary of the model
+regression_model_seeds
+```
+
+Treatment: The coefficient for treatmentshrub is -2.69287, which would indicate that the shrub treatment leads to lower seed count than open treatment, however the p-value is 0.10426 which is greater that the confidence interval of 0.05, so the impact of treatment on seed counts is not statistically significant.
+
+Species: The p-value for species Carrup, Geuros, Kobmyo, Minobt, and Tridas vary, but the only species with p-values that are under 0.05 is Tridas, with a p-value of 0.00324 and a coefficient of 32.20713, which would indicate that the Tridas species plant has a statistically significanly higher seed count than the other species.
+
+Total Number of Inflorescences: The coefficient for total_nr_infl is 1.85121, indicating that an increase of one unit if inflorescenses brings about an increase of around 1.85 seeds. The p-value, \<2e-16, is statistically significant because it is far below the significance level of 0.05.
+
+Overall Model: Overall the model has a p-value of \<2.2e-16, which is less than 0.05 so the model is statistically significant. The test also produced a multiple R value 0.7451, which means that the total number of inflorescences can explain about 74.51% of the variability in the the outputs.
+
+## Results
+
+From the analysis described in the Methods section, it was established that the total number of Inflorescences and the plant species Tridas both were variables that had significant impacts on seed count. This was determined with a regression model that included the seed counts, total number of inflorescenses, treatment type, and plant species.
+
+The significant statistics that were discovered were:
+
+-   Species Tridas
+
+    -   p-value: 0.00324
+
+    -   coefficient: 32.20713
+
+-   Total Number of Infloresence
+
+    -   p-value: \<2e-16
+
+    -   coefficient: 1.85121
+
+```{r}
+
+regression_model_seeds
+```
+
+```{r}
+combined_scatterplot
+```
+
+```{r}
+print(plot3)
+```
+
+## Bibliography
+
+Koontz, Terri L., and Heather L. Simpson. "The Composition of Seed Banks on Kangaroo Rat ( Dipodomys Spectabilis) Mounds in a Chihuahuan Desert Grassland." Journal of Arid Environments, vol. 74, no. 10, 2010, pp. 1156--61, https://doi.org/10.1016/j.jaridenv.2010.03.008.
